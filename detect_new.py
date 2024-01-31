@@ -1,51 +1,30 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Fri Dec 22 15:34:24 2023
 
-@author: cosbo
-"""
-
-
-import imageio.v2 as iio
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2 as cv
-import time as timePY
+import time
 from collections import namedtuple
-import pandas as pd
-import os
-
-from scipy.optimize import minimize
-from progress.bar import IncrementalBar
-
 import multiprocessing as mp
+import cv2 as cv
 
 shared_data_class = namedtuple(
     'shared_data_class', ['cap', 'color1', 'color2'])
 
-
 def get_coors(frame, __color1, __color2, debug=False):
+    indeces_1 = find_color(frame, __color1, 500, debug)
+    indeces_2 = find_color(frame, __color2, 2000, debug)
+    if 0 in np.shape(indeces_1):
+        indeces_1 = np.array([[-10000, 10000], [-10000, 10000]])
+    if 0 in np.shape(indeces_2):
+        indeces_2 = np.array([[-10000, 10000], [-10000, 10000]])
+    center1 = np.mean(indeces_1, axis=1)
+    center2 = np.mean(indeces_2, axis=1)
     if debug:
-
-        center1 = find_center(find_color(
-            frame, __color1, 5000, True), (400, 700))
-        center2 = find_center(find_color(
-            frame, __color2, 8000, True), (400, 700))
-    else:
-
-        center1 = find_center(find_color(
-            frame, __color1, 5000, False), (750, 550))
-        center2 = find_center(find_color(
-            frame, __color2, 8000, False), (750, 550))
+        plt.plot(center1[1], center1[0], 'o', markersize=4)
+        plt.plot(center2[1], center2[0], 'o', markersize=4)
+        plt.close()
+        
     return center1, center2
-
-
-def get_stops(freqs):
-    stops = np.zeros(len(freqs), dtype=int)
-    for i, single_freq in enumerate(freqs):
-        stops[i] = int(stops[i-1] + len(single_freq))
-    return stops
-
 
 def freq_to_T(f):
     """
@@ -53,36 +32,8 @@ def freq_to_T(f):
     """
     return 1/(f/1000)
 
-
-def read_video(video_path, max_frames=10, skip=5):
-    cam = cv.VideoCapture(video_path)
-    frames = []
-    for i in range(max_frames*skip):
-        if i % skip == 0:
-            ret, frame = cam.read()
-
-            # if frame is read correctly ret is True
-            if not ret:
-                print("Can't receive frame (stream end?). Exiting ...")
-                break
-            # Our operations on the frame come here
-            rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-            frames.append(rgb)
-
-            # Display the resulting frame
-            if cv.waitKey(1) == ord('q'):
-                break
-
-# When everything done, release the capture
-    cam.release()
-    cv.destroyAllWindows()
-    return frames
-
-
-def get_times(T_set, timestostable=15, timestowatch=3, fps=60, freq_specific=False):
+def get_times(T_set, timestostable, timestowatch, fps, freq_specific=False):
     """
-
-
     Parameters
     ----------
     T_set : TYPE
@@ -99,10 +50,12 @@ def get_times(T_set, timestostable=15, timestowatch=3, fps=60, freq_specific=Fal
     timestamps = []
     freqs = []
     for T in T_set:
-        period = T*fps  # period in frames number
-        start = start + timestostable*period
-        stamps = list(np.linspace(int(start), int(
-            start+period*timestowatch), int(period*timestowatch), dtype=int))
+        period      = T*fps
+        start       = start + timestostable*period
+        time_start  = int(start+period*timestowatch)
+        time        = int(period*timestowatch)
+        stamps = list(
+            np.linspace(int(start), time_start, time, dtype=int))
         if freq_specific:
             timestamps.append(stamps)
         else:
@@ -112,206 +65,27 @@ def get_times(T_set, timestostable=15, timestowatch=3, fps=60, freq_specific=Fal
         freqs.append(np.full_like(stamps, single_frequency))
     return timestamps, freqs
 
-
-def analyze_video_black(video_path, timestamps,
-                        color1=[230, 217, 28], color2=[0, 0, 0], max_frames=10e6):
-    """
-    returns coordinates of time of a single video
-    """
-    def get_coors(frame, debug=False):
-        if debug:
-
-            center1 = find_center(find_color(
-                frame, color1, 6000, True), (400, 400))
-            center2 = find_center(find_black(
-                frame, color2, 10, True), (400, 700))
-        else:
-
-            center1 = find_center(find_color(
-                frame, color1, 6000, False), (750, 550))
-            center2 = find_center(find_black(
-                frame, color2, 10, False), (750, 550))
-        return center1, center2
-
-    cap = cv.VideoCapture(video_path)
-    coors_left = []
-    coors_right = []
-    debug = False
-    for frame_number in timestamps:
-        cap.set(cv.CAP_PROP_POS_FRAMES, frame_number-1)
-
-        ret, frame = cap.read()
-        # if frame is read correctly ret is True
-        if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
-            break
-
-        # Our operations on the frame come here
-        rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-
-        coor1, coor2 = get_coors(rgb, debug=debug)
-        coors_left.append(coor1)
-        coors_right.append(coor2)
-
-        # Display the resulting frame
-        if cv.waitKey(1) == ord('q'):
-            break
-
-# When everything done, release the capture
-    cap.release()
-    cv.destroyAllWindows()
-    return coors_left, coors_right
-
-
-def analyze_video(video_path, timestamps, frequencys,
-                  color1=[230, 217, 28], color2=[0, 0, 0], max_frames=10e6):
-    """
-    returns coordinates of time of a single video
-    """
-
-    cap = cv.VideoCapture(video_path)
-    coors_left = []
-    coors_right = []
-    debug = True
-    tic = timePY.perf_counter()
-    stoppoints = get_stops(freqs)
-    bar = IncrementalBar('Progress', max=len(timestamps))
-
-    for i, frame_number in enumerate(timestamps):
-        bar.next()
-        cap.set(cv.CAP_PROP_POS_FRAMES, frame_number-1)
-
-        ret, frame = cap.read()
-        # if frame is read correctly ret is True
-        if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
-            break
-
-        # Our operations on the frame come here
-        rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-        if debug is True:
-            plt.imshow(rgb)
-        coor1, coor2 = get_coors(rgb, debug=debug)
-        coors_left.append(coor1)
-        coors_right.append(coor2)
-        if i in stoppoints:
-            np.savetxt(f'left{video_path[0:-4]}.txt', coors_left)
-            np.savetxt(f'right{video_path[0:-4]}.txt', coors_right)
-            print('\n')
-            print(f'one freq done in {timePY.perf_counter() - tic:.2} s')
-            print('\n')
-            tic = timePY.perf_counter()
-        # Display the resulting frame
-        if cv.waitKey(1) == ord('q'):
-            break
-
-# When everything done, release the capture
-    cap.release()
-    cv.destroyAllWindows()
-
-    return coors_left, coors_right
-
-
-def find_color(img, color, q=6000, show_im=False):
-
+def find_color(img, color, q, show_im=False):
     yellow_matrix = np.sum((img - color)**2, axis=-1)
-
-    # q = 2*200*200  # порог
-
     indeces_fixed = np.where(yellow_matrix < q)
-    # plt.imshow(yellow_matrix)
     if show_im:
         n = len(color)
         plt.figure()
-        govno = np.repeat([yellow_matrix.T], n, axis=0).T  # говнокод
+        govno = np.repeat([yellow_matrix.T], n, axis=0).T
         fixed_img = np.where(govno < q,
                              img, np.full_like(img, 7.0))
-
         plt.imshow(fixed_img)
     return indeces_fixed
-
-
-def find_black(img, color=[0, 0, 0], q=100, show_im=False):
-    """
-    это костыль, который я сделал, чтобы хоть как-то трекать правую метку
-    """
-    boxed_img = img[:, 400:800, :]  # магия
-    black_matrix = np.sum((boxed_img - color)**2, axis=-1)
-
-    indeces = np.where(black_matrix < q)
-    indeces_fixed = np.asarray(indeces).T + np.asarray([0, 400])
-    if show_im:
-        n = len(color)
-        plt.figure()
-        govno = np.repeat([black_matrix.T], n, axis=0).T  # говнокод
-        fixed_img = np.where(govno < q,
-                             boxed_img, np.full_like(boxed_img, 7.0))
-        plt.imshow(fixed_img)
-    return indeces_fixed.T
-
-
-def find_center(indeces, x0=(170, 170)):
-    def all_dist(x0, indeces):
-
-        summ = np.sum((x0 - indeces)**2)
-        aa = x0 - indeces
-        bb = aa**2
-        return summ
-
-    indeces = np.asarray(indeces).T
-    result = minimize(all_dist, x0, args=indeces, tol=1e-6)
-    center = (int(result.x[0]), int(result.x[1]))
-
-    return center
-
-
-def find_amplitude(data, freqs):
-    A_array = np.zeros(len(freqs))
-    freq_array = np.zeros(len(freqs))
-    start = 0
-    for i, frequency in enumerate(freqs):
-        N = len(frequency)
-        coors = data[start:start+N]
-        Y = coors[:, 0]
-        amp = np.abs(np.max(Y) - np.min(Y))
-        A_array[i] = amp
-        start = start+N
-        freq_array[i] = frequency[0]
-    return A_array, freq_array
-
-
-def mp_single_frame(frame_number):
-    global cap
-
-    cap.set(cv.CAP_PROP_POS_FRAMES, frame_number-1)
-
-    ret, frame = cap.read()
-    # if frame is read correctly ret is True
-    if not ret:
-        print("Can't receive frame (stream end?). Exiting ...")
-        raise ValueError()
-
-    # Our operations on the frame come here
-    rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-    debug = False
-    if debug is True:
-        plt.imshow(rgb)
-    coor1, coor2 = get_coors(rgb, debug=debug)
-
-    return (coor1, coor2)
-
 
 def mp_init(shared_data):
     global color1
     global color2
-
     global video_path
 
     video_path = shared_data.cap
     color1 = shared_data.color1
     color2 = shared_data.color2
     pass
-
 
 def mp_single_frequency(arg_array):
     global video_path
@@ -321,63 +95,40 @@ def mp_single_frequency(arg_array):
     __coors_left = []
     __coors_right = []
     __freq, __timestamps = arg_array
-    cap = cv.VideoCapture(video_path)
+    cap = cv.VideoCapture(filename=video_path, apiPreference=cv.CAP_FFMPEG)
     for i, frame_number in enumerate(__timestamps):
         cap.set(cv.CAP_PROP_POS_FRAMES, frame_number-1)
         ret, frame = cap.read()
-        # if frame is read correctly ret is True
+        kernel = np.ones((3, 3), np.uint8)
+        frame = cv.dilate(frame, kernel, iterations=3)   
+        frame = cv.erode(frame, kernel, iterations=3)   
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
-        # Our operations on the frame come here
-        rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-        if debug is True:
-            plt.imshow(rgb)
-        __coor1, __coor2 = get_coors(rgb, color1, color2, debug=debug)
+        if debug:
+            plt.figure()
+            plt.imshow(frame)
+            plt.close()
+        __coor1, __coor2 = get_coors(frame, color1, color2, debug)
         __coors_left.append(__coor1)
         __coors_right.append(__coor2)
-        # Display the resulting frame
         if cv.waitKey(1) == ord('q'):
             break
+    cap.release()
     return (__freq, __coors_left, __coors_right)
 
-
 def mp_analyze_video(video_path, timestamps, frequencys,
-                     color1=[230, 217, 28], color2=[0, 0, 0], max_frames=10e6,
+                     color1, color2,
                      progress_bar=True):
 
     def amp(data):
         Y = np.asarray(data)[:, 0]
         return np.abs(np.max(Y) - np.min(Y))
 
-    def mp_single_frame(frame_number):
-        global video_path
-        cap = cv.VideoCapture(video_path)
-        cap.set(cv.CAP_PROP_POS_FRAMES, frame_number-1)
-
-        ret, frame = cap.read()
-        # if frame is read correctly ret is True
-        if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
-            raise ValueError()
-
-        # Our operations on the frame come here
-        rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-        debug = False
-        if debug is True:
-            plt.imshow(rgb)
-        coor1, coor2 = get_coors(rgb, debug=debug)
-        return (coor1, coor2)
-
     coors_left = []
     coors_right = []
-    debug = False
-    tic = timePY.perf_counter()
-    stoppoints = get_stops(freqs)
-    results = []
-    bar = IncrementalBar('Progress', max=len(timestamps))
     shared_data = shared_data_class(video_path, color1, color2)
-    pool = mp.Pool(processes=6,
+    pool = mp.Pool(processes=mp.cpu_count(),
                    initializer=mp_init, initargs=(shared_data, ))
     N_t = len(frequencys)
     amplitudes_left = []
@@ -404,23 +155,20 @@ def mp_analyze_video(video_path, timestamps, frequencys,
                                                        amplitudes_right,
                                                        result_freqs]).T)
                 pbar.update(1)
-
             pool.close()
             pool.join()
             pbar.update()
-            timePY.sleep(2.0)
+            time.sleep(2.0)
     return freqs_full, coors_left, coors_right
 
 
-limit = [50, 5000]  # в мгц
-
-TimesToStable = 12
-TimesToWatch = 3
+limit = [200, 3000]  # в мгц
+TimesToStable = 8.8
+TimesToWatch = 1.2
 start, end = limit
-step = int(5)  # в мгц
+step = int(2)  # в мгц
 fps = 60
 path1 = f'{start}-{end}.MOV'
-
 if __name__ == "__main__":
 
     freq_set = np.linspace(start, end, (end-start)//step+1, dtype=int)
@@ -428,11 +176,15 @@ if __name__ == "__main__":
 
     time, freqs = get_times(t_set, TimesToStable,
                             TimesToWatch, fps=fps, freq_specific=True)
-    time = time[:]
-    color1 = [225, 217, 60]
-    color2 = [80, 240, 80]
+    color1 = [90, 225, 225]
+    color2 = [55, 175, 125]
+    print(cv.getBuildInformation())
     freq_full, coor1, coor2 = mp_analyze_video(
-        path1, time, freqs, color1, color2)
+        path1, 
+        time,
+        freqs, 
+        color1, 
+        color2)
     np.savetxt(f'data/full_left{start}-{end}.txt', coor1)
     np.savetxt(f'data/full_right{start}-{end}.txt', coor2)
     np.savetxt(f'data/full_freq{start}-{end}.txt', freq_full)
