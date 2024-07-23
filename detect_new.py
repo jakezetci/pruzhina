@@ -2,7 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-import time
+import time as timePY
 from collections import namedtuple
 import multiprocessing as mp
 import cv2 as cv
@@ -95,13 +95,22 @@ def mp_single_frequency(arg_array):
     __coors_left = []
     __coors_right = []
     __freq, __timestamps = arg_array
+    font = cv.FONT_HERSHEY_SIMPLEX 
+
     cap = cv.VideoCapture(filename=video_path, apiPreference=cv.CAP_FFMPEG)
     for i, frame_number in enumerate(__timestamps):
         cap.set(cv.CAP_PROP_POS_FRAMES, frame_number-1)
         ret, frame = cap.read()
         kernel = np.ones((3, 3), np.uint8)
         frame = cv.dilate(frame, kernel, iterations=3)   
-        frame = cv.erode(frame, kernel, iterations=3)   
+        frame = cv.erode(frame, kernel, iterations=3)
+        cv.putText(frame,  
+            f'frequency = {__freq[0]}',  
+            (50, 50),  
+            font, 1,  
+            (0, 255, 255),  
+            2,  
+            cv.LINE_4) 
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
@@ -112,6 +121,7 @@ def mp_single_frequency(arg_array):
         __coor1, __coor2 = get_coors(frame, color1, color2, debug)
         __coors_left.append(__coor1)
         __coors_right.append(__coor2)
+        
         if cv.waitKey(1) == ord('q'):
             break
     cap.release()
@@ -158,13 +168,13 @@ def mp_analyze_video(video_path, timestamps, frequencys,
             pool.close()
             pool.join()
             pbar.update()
-            time.sleep(2.0)
+            timePY.sleep(2.0)
     return freqs_full, coors_left, coors_right
 
 
-limit = [200, 3000]  # в мгц
-TimesToStable = 8.8
-TimesToWatch = 1.2
+limit = [498, 498]  # в мгц
+TimesToStable = 0
+TimesToWatch = 2
 start, end = limit
 step = int(2)  # в мгц
 fps = 60
@@ -174,14 +184,14 @@ if __name__ == "__main__":
     freq_set = np.linspace(start, end, (end-start)//step+1, dtype=int)
     t_set = list(map(freq_to_T, freq_set))
 
-    time, freqs = get_times(t_set, TimesToStable,
+    time1, freqs = get_times(t_set, TimesToStable,
                             TimesToWatch, fps=fps, freq_specific=True)
     color1 = [90, 225, 225]
     color2 = [55, 175, 125]
     print(cv.getBuildInformation())
     freq_full, coor1, coor2 = mp_analyze_video(
         path1, 
-        time,
+        time1,
         freqs, 
         color1, 
         color2)
